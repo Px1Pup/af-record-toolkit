@@ -1,0 +1,182 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "af-annotations.schema.json",
+    "title": "af-annotations",
+    "type": "object",
+    "required": ["format", "version", "reference", "main", "region_marker"],
+    "additionalProperties": false,
+    "properties": {
+        "format": {
+            "const": "af-annotations"
+        },
+        "version": {
+            "type": "string",
+            "pattern": "^v\\d+\\.\\d+\\.\\d+$"
+        },
+        "reference": {
+            "type": "object",
+            "required": [
+                "timeline_camera",
+                "total_frames",
+                "frame_index_origin",
+                "interval"
+            ],
+            "additionalProperties": false,
+            "properties": {
+                "timeline_camera": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "时间轴基准相机名称，须与 af_meta.json cameras[0].name 一致"
+                },
+                "total_frames": {
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "frame_index_origin": {
+                    "const": 0
+                },
+                "interval": {
+                    "const": "half_open",
+                    "description": "帧区间为 [start, end)，与 timeline_camera 序列帧索引对齐；合法范围 [0, total_frames]"
+                }
+            }
+        },
+        "main": {
+            "type": "array",
+            "description": "动作步骤（含批注），须覆盖完整时间轴且不重叠、无缝隙",
+            "items": {
+                "$ref": "#/$defs/action_step"
+            }
+        },
+        "region_marker": {
+            "type": "object",
+            "required": [
+                "success_markers",
+                "interference_markers",
+                "error_markers",
+                "single_frame_markers"
+            ],
+            "additionalProperties": false,
+            "properties": {
+                "success_markers": {
+                    "type": "array",
+                    "description": "成功帧区域",
+                    "items": {
+                        "$ref": "#/$defs/region_range"
+                    }
+                },
+                "interference_markers": {
+                    "type": "array",
+                    "description": "干扰帧区域",
+                    "items": {
+                        "$ref": "#/$defs/region_range"
+                    }
+                },
+                "error_markers": {
+                    "type": "array",
+                    "description": "错误帧区域",
+                    "items": {
+                        "$ref": "#/$defs/error_region"
+                    }
+                },
+                "single_frame_markers": {
+                    "type": "array",
+                    "description": "单帧标记",
+                    "items": {
+                        "$ref": "#/$defs/single_frame_marker"
+                    }
+                }
+            }
+        }
+    },
+    "$defs": {
+        "frame_index": {
+            "type": "integer",
+            "minimum": 0
+        },
+        "non_empty_string": {
+            "type": "string",
+            "minLength": 1
+        },
+        "action_step": {
+            "type": "object",
+            "required": ["start_frame", "end_frame", "action_text", "comment"],
+            "additionalProperties": false,
+            "properties": {
+                "start_frame": {
+                    "$ref": "#/$defs/frame_index",
+                    "description": "步骤起始帧 index_i（含）"
+                },
+                "end_frame": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "步骤结束帧 index_j（不含）"
+                },
+                "action_text": {
+                    "$ref": "#/$defs/non_empty_string",
+                    "description": "步骤描述文本"
+                },
+                "comment": {
+                    "type": "string",
+                    "description": "批注文本，可为空字符串"
+                }
+            }
+        },
+        "region_range": {
+            "type": "object",
+            "required": ["start", "end", "comment"],
+            "additionalProperties": false,
+            "properties": {
+                "start": {
+                    "$ref": "#/$defs/frame_index"
+                },
+                "end": {
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "comment": {
+                    "$ref": "#/$defs/non_empty_string"
+                }
+            }
+        },
+        "error_region": {
+            "type": "object",
+            "required": ["start", "end", "reason", "comment", "recover"],
+            "additionalProperties": false,
+            "properties": {
+                "start": {
+                    "$ref": "#/$defs/frame_index"
+                },
+                "end": {
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "reason": {
+                    "$ref": "#/$defs/non_empty_string",
+                    "description": "错误原因，建议层级用 '-' 连接，如 错误原因A-错误原因A1"
+                },
+                "comment": {
+                    "type": "string"
+                },
+                "recover": {
+                    "type": "integer",
+                    "enum": [0, 1],
+                    "description": "是否可恢复：1=可恢复，0=不可恢复"
+                }
+            }
+        },
+        "single_frame_marker": {
+            "type": "object",
+            "required": ["frame", "comment"],
+            "additionalProperties": false,
+            "properties": {
+                "frame": {
+                    "$ref": "#/$defs/frame_index"
+                },
+                "comment": {
+                    "$ref": "#/$defs/non_empty_string"
+                }
+            }
+        }
+    }
+}

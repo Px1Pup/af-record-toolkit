@@ -1,0 +1,110 @@
+rosbag2_bagfile_information:
+  compression_format: ''
+  compression_mode: ''
+  custom_data: null
+  duration:
+    nanoseconds: 5645520064
+  files:
+  - duration:
+      nanoseconds: 5645520064
+    message_count: 636
+    path: af_rosbag_0.db3
+    starting_time:
+      nanoseconds_since_epoch: 1779337428324156144
+  message_count: 636
+  relative_file_paths:
+  - af_rosbag_0.db3
+  ros_distro: rosbags
+  starting_time:
+    nanoseconds_since_epoch: 1779337428324156144
+  storage_identifier: sqlite3
+  topics_with_message_count:
+  - message_count: 159
+    topic_metadata:
+      name: /camera/head_color/image/compressed
+      offered_qos_profiles:
+      - avoid_ros_namespace_conventions: false
+        deadline:
+          nsec: 854775807
+          sec: 9223372036
+        depth: 0
+        durability: volatile
+        history: unknown
+        lifespan:
+          nsec: 854775807
+          sec: 9223372036
+        liveliness: automatic
+        liveliness_lease_duration:
+          nsec: 854775807
+          sec: 9223372036
+        reliability: best_effort
+      serialization_format: cdr
+      type: sensor_msgs/msg/CompressedImage
+      type_description_hash: RIHS01_15640771531571185e2efc8a100baf923961a4d15d5569652e6cb6691e8e371a
+  - message_count: 159
+    topic_metadata:
+      name: /camera/hand_left_color/image/compressed
+      offered_qos_profiles:
+      - avoid_ros_namespace_conventions: false
+        deadline:
+          nsec: 854775807
+          sec: 9223372036
+        depth: 0
+        durability: volatile
+        history: unknown
+        lifespan:
+          nsec: 854775807
+          sec: 9223372036
+        liveliness: automatic
+        liveliness_lease_duration:
+          nsec: 854775807
+          sec: 9223372036
+        reliability: best_effort
+      serialization_format: cdr
+      type: sensor_msgs/msg/CompressedImage
+      type_description_hash: RIHS01_15640771531571185e2efc8a100baf923961a4d15d5569652e6cb6691e8e371a
+  - message_count: 159
+    topic_metadata:
+      name: /camera/hand_right_color/image/compressed
+      offered_qos_profiles:
+      - avoid_ros_namespace_conventions: false
+        deadline:
+          nsec: 854775807
+          sec: 9223372036
+        depth: 0
+        durability: volatile
+        history: unknown
+        lifespan:
+          nsec: 854775807
+          sec: 9223372036
+        liveliness: automatic
+        liveliness_lease_duration:
+          nsec: 854775807
+          sec: 9223372036
+        reliability: best_effort
+      serialization_format: cdr
+      type: sensor_msgs/msg/CompressedImage
+      type_description_hash: RIHS01_15640771531571185e2efc8a100baf923961a4d15d5569652e6cb6691e8e371a
+  - message_count: 159
+    topic_metadata:
+      name: /robot/joint_states
+      offered_qos_profiles:
+      - avoid_ros_namespace_conventions: false
+        deadline:
+          nsec: 854775807
+          sec: 9223372036
+        depth: 0
+        durability: volatile
+        history: unknown
+        lifespan:
+          nsec: 854775807
+          sec: 9223372036
+        liveliness: automatic
+        liveliness_lease_duration:
+          nsec: 854775807
+          sec: 9223372036
+        reliability: best_effort
+      serialization_format: cdr
+      type: control_interface/msg/JointState
+      type_description_hash: RIHS01_04e44987d6d986ff8f2cd9bb68b1929619bda0d9b6955255ad86f0fc334f554e
+  version: 9

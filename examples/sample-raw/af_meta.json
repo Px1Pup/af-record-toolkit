@@ -1,0 +1,74 @@
+{
+    "robot_id": "AID0015AC00415",
+    "robot_type": "demo_robot",
+    "author": "arbor",
+    "create_time": "2026-05-20T10:36:41+08:00",
+    "start_timestamp_ns": 1779337428324156144,
+    "end_timestamp_ns": 1779337433969676208,
+    "duration_s": 5.6,
+    "total_frames_count": 159,
+    "data_validate": {
+        "validate": true,
+        "reason": ""
+    },
+    "fps_validate": {
+        "validate": true,
+        "reason": ""
+    },
+    "integrity_validate": {
+        "validate": true,
+        "reason": ""
+    },
+    "is_aligned": true,
+    "cameras": [
+        {
+            "name": "head_color",
+            "type": "d455",
+            "fps": 30
+        },
+        {
+            "name": "hand_left_color",
+            "type": "d405",
+            "fps": 30
+        },
+        {
+            "name": "hand_right_color",
+            "type": "d405",
+            "fps": 30
+        }
+    ],
+    "end_effectors": [
+        {
+            "name": "left_hand",
+            "type": "arbor_gripper"
+        },
+        {
+            "name": "right_hand",
+            "type": "arbor_gripper"
+        }
+    ],
+    "joint_names": [
+        "left_arm_joint1",
+        "left_arm_joint2",
+        "left_arm_joint3",
+        "left_arm_joint4",
+        "left_arm_joint5",
+        "left_arm_joint6",
+        "left_arm_joint7",
+        "right_arm_joint1",
+        "right_arm_joint2",
+        "right_arm_joint3",
+        "right_arm_joint4",
+        "right_arm_joint5",
+        "right_arm_joint6",
+        "right_arm_joint7",
+        "left_gripper_joint1",
+        "right_gripper_joint1",
+        "joint_head_yaw",
+        "joint_head_pitch",
+        "joint_body_pitch",
+        "joint_lift_body"
+    ],
+    "format": "af-record",
+    "version": "v1.0.1"
+}

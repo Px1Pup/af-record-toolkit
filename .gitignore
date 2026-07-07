@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+examples/sample-output/
+examples/sample-1-af-record/
+
+# Generated RAW examples (rebuild with: python scripts/build_samples.py)
+examples/sample-*/
+!examples/sample-raw/
