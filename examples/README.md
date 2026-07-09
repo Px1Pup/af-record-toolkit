@@ -30,5 +30,5 @@ python scripts/build_samples.py
 
 ```bash
 python scripts/verify_af_raw.py examples/sample-single-arm-6joint-1cam
-python process_af_raw.py examples/sample-dual-arm-6joint-3cam -o /tmp/out
+python process_af_raw.py examples/sample-dual-arm-6joint-3cam -o ./examples/out
 ```
