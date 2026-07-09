@@ -18,9 +18,10 @@ python scripts/build_samples.py
 | `sample-raw/` | 3 | 20 DoF（双臂 7+7 + 夹爪 + 头/身/升降） | PASS |
 | `sample-1cam/` | 1 | 20 DoF（与 raw 相同） | PASS |
 | `sample-4cam/` | 4 | 20 DoF | PASS |
-| `sample-dual-arm-6joint-3cam/` | 3 | 双臂各 6 关节 + 夹爪（14 DoF） | PASS |
-| `sample-single-arm-6joint-1cam/` | 1 | `arm_joint1`..`arm_joint6` | PASS |
-| `sample-dual-arm-no-torso-3cam/` | 3 | 双臂 7+7 + 夹爪，无头/身/升降（16 DoF） | PASS |
+| `sample-dual-arm-6joint-3cam/` | 3 | `lhc_da2`：`r_joint1`..`6` + `l_joint1`..`6` | PASS |
+| `sample-single-arm-6joint-1cam/` | 1 | `lhc_la_l2`：`r_joint1`..`r_joint6` | PASS |
+| `sample-dual-arm-lift-pitch-3cam/` | 3 | `lhc_ida_l2_pitch`：`l_joint1`..`6` + `r_joint1`..`6` | PASS |
+| `sample-dual-arm-folding-3cam/` | 3 | `LHC-RW2-ZP-6G`：`l_joint1`..`6` + `r_joint1`..`6` | PASS |
 | `sample-meta-mismatch/` | meta 4 / bag 3 | 20 DoF | FAIL |
 | `sample-long-5min/` | 3 | 20 DoF，300 帧 @ 1fps（5 分钟时间轴） | PASS |
 | `sample-invalid/` | — | 不合规 meta，无 bag | FAIL |

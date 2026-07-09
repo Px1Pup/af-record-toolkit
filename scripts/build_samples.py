@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import shutil
 from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
@@ -16,6 +17,7 @@ from rosbags.rosbag2 import StoragePlugin, Writer
 ROOT = Path(__file__).resolve().parent.parent
 BASE_SAMPLE = ROOT / "examples" / "sample-raw"
 EXAMPLES_DIR = ROOT / "examples"
+AF_RECORD_VERSION = "v1.0.1"
 
 MSG_COMPRESSED_IMAGE = "sensor_msgs/msg/CompressedImage"
 
@@ -58,6 +60,70 @@ TORSO_JOINTS = (
     "joint_head_pitch",
     "joint_body_pitch",
     "joint_lift_body",
+)
+
+JOINT_NOISE_STD_RAD = 0.008
+
+
+@dataclass(frozen=True)
+class RobotProfile:
+    sample_name: str
+    record_id: str
+    robot_type: str
+    joint_names: tuple[str, ...]
+    cameras: tuple[str, ...]
+    base_joint_map: dict[str, str]
+
+
+# Joint names match each robot URDF; hardcoded here so generation only needs sample-raw/.
+ROBOT_PROFILES: tuple[RobotProfile, ...] = (
+    RobotProfile(
+        sample_name="sample-single-arm-6joint-1cam",
+        record_id="SAMPLE-LHC-LA-L2-SL",
+        robot_type="lhc_la_l2_1050_description_sl",
+        joint_names=tuple(f"r_joint{i}" for i in range(1, 7)),
+        cameras=("head_color",),
+        base_joint_map={f"r_joint{i}": f"left_arm_joint{i}" for i in range(1, 7)},
+    ),
+    RobotProfile(
+        sample_name="sample-dual-arm-6joint-3cam",
+        record_id="SAMPLE-LHC-DA2",
+        robot_type="lhc_da2_description_2603",
+        joint_names=tuple(
+            [*(f"r_joint{i}" for i in range(1, 7)), *(f"l_joint{i}" for i in range(1, 7))]
+        ),
+        cameras=THREE_CAM_NAMES,
+        base_joint_map={
+            **{f"l_joint{i}": f"left_arm_joint{i}" for i in range(1, 7)},
+            **{f"r_joint{i}": f"right_arm_joint{i}" for i in range(1, 7)},
+        },
+    ),
+    RobotProfile(
+        sample_name="sample-dual-arm-lift-pitch-3cam",
+        record_id="SAMPLE-LHC-IDA-L2-PITCH",
+        robot_type="lhc_ida_l2_pitch_800_description",
+        joint_names=tuple(
+            [*(f"l_joint{i}" for i in range(1, 7)), *(f"r_joint{i}" for i in range(1, 7))]
+        ),
+        cameras=THREE_CAM_NAMES,
+        base_joint_map={
+            **{f"l_joint{i}": f"left_arm_joint{i}" for i in range(1, 7)},
+            **{f"r_joint{i}": f"right_arm_joint{i}" for i in range(1, 7)},
+        },
+    ),
+    RobotProfile(
+        sample_name="sample-dual-arm-folding-3cam",
+        record_id="SAMPLE-LHC-RW2-ZP-6G",
+        robot_type="LHC-RW2-ZP-6G_description",
+        joint_names=tuple(
+            [*(f"l_joint{i}" for i in range(1, 7)), *(f"r_joint{i}" for i in range(1, 7))]
+        ),
+        cameras=THREE_CAM_NAMES,
+        base_joint_map={
+            **{f"l_joint{i}": f"left_arm_joint{i}" for i in range(1, 7)},
+            **{f"r_joint{i}": f"right_arm_joint{i}" for i in range(1, 7)},
+        },
+    ),
 )
 
 
@@ -127,32 +193,38 @@ def resample_messages(
     return [(timestamps[index], source_rows[index % len(source_rows)][1]) for index in range(frame_count)]
 
 
-def subset_joint_rows_fast(
+def build_joint_rows(
     joint_rows: list[tuple[int, bytes]],
     *,
     output_names: list[str],
-    rename_from_base: dict[str, str] | None,
+    rename_from_base: dict[str, str],
     msgtype: str,
     typestore: object,
     reader: AnyReader,
+    noise_std: float = JOINT_NOISE_STD_RAD,
+    seed: int = 42,
 ) -> list[tuple[int, bytes]]:
     index = {name: pos for pos, name in enumerate(BASE_JOINT_NAMES)}
     pick_pairs: list[tuple[str, str]] = []
     for out_name in output_names:
-        base_name = (rename_from_base or {}).get(out_name, out_name)
+        base_name = rename_from_base.get(out_name, out_name)
         if base_name not in index:
             raise KeyError(f"joint {base_name!r} not found in base bag (for output {out_name!r})")
         pick_pairs.append((out_name, base_name))
 
+    rng = np.random.default_rng(seed)
     joint_cls = type(reader.deserialize(joint_rows[0][1], msgtype))
     filtered: list[tuple[int, bytes]] = []
-    for timestamp, raw in joint_rows:
+    for frame_idx, (timestamp, raw) in enumerate(joint_rows):
         msg = reader.deserialize(raw, msgtype)
         names = [out for out, _ in pick_pairs]
         states = np.array(
             [float(msg.joint_states[index[base]]) for _, base in pick_pairs],
             dtype=np.float64,
         )
+        if noise_std > 0:
+            noise = rng.normal(0.0, noise_std, size=states.shape)
+            states = np.clip(states + noise, -3.14, 3.14)
         new_msg = joint_cls(header=msg.header, joint_names=names, joint_states=states)
         filtered.append((timestamp, bytes(typestore.serialize_cdr(new_msg, msgtype))))
     return filtered
@@ -167,10 +239,12 @@ def update_meta_for_export(
     fps: float,
     start_ns: int,
     record_id: str,
+    robot_type: str | None = None,
 ) -> dict:
     out = deepcopy(meta)
     end_ns = start_ns + int(round((frame_count - 1) * 1_000_000_000 / fps)) if frame_count else start_ns
     out["robot_id"] = record_id
+    out["robot_type"] = robot_type or out.get("robot_type", "demo_robot")
     out["cameras"] = cameras
     out["joint_names"] = joint_names
     out["start_timestamp_ns"] = start_ns
@@ -178,8 +252,11 @@ def update_meta_for_export(
     out["duration_s"] = round((end_ns - start_ns) / 1_000_000_000, 3)
     out["total_frames_count"] = frame_count
     out["is_aligned"] = True
+    out["version"] = AF_RECORD_VERSION
     for camera in out["cameras"]:
         camera["fps"] = fps
+    if len(joint_names) <= 6:
+        out["end_effectors"] = [{"name": "right_hand", "type": "inspire_gripper"}]
     return out
 
 
@@ -219,6 +296,45 @@ def standard_frame_info(messages: dict[str, list[tuple[int, bytes]]]) -> tuple[i
     start_ns = head_rows[0][0]
     frame_count = len(head_rows)
     return start_ns, frame_count, 30.0
+
+
+def build_robot_profile_sample(
+    profile: RobotProfile,
+    messages: dict[str, list[tuple[int, bytes]]],
+    msgtypes: dict[str, str],
+    typestore: object,
+    meta_template: dict,
+    reader: AnyReader,
+) -> None:
+    start_ns, frame_count, fps = standard_frame_info(messages)
+    joint_names = list(profile.joint_names)
+    joint_rows = build_joint_rows(
+        messages[JOINT_TOPIC],
+        output_names=joint_names,
+        rename_from_base=dict(profile.base_joint_map),
+        msgtype=msgtypes[JOINT_TOPIC],
+        typestore=typestore,
+        reader=reader,
+        seed=sum(ord(ch) for ch in profile.sample_name),
+    )
+    if len(profile.cameras) == 1:
+        topic_messages = {
+            CAMERA_TOPICS[profile.cameras[0]]: messages[CAMERA_TOPICS[profile.cameras[0]]],
+            JOINT_TOPIC: joint_rows,
+        }
+    else:
+        topic_messages = {**three_camera_messages(messages), JOINT_TOPIC: joint_rows}
+    meta = update_meta_for_export(
+        meta_template,
+        cameras=camera_specs(profile.cameras, fps),
+        joint_names=joint_names,
+        frame_count=frame_count,
+        fps=fps,
+        start_ns=start_ns,
+        record_id=profile.record_id,
+        robot_type=profile.robot_type,
+    )
+    write_sample(profile.sample_name, meta, topic_messages, msgtypes, typestore)
 
 
 def build_sample_1cam(
@@ -326,108 +442,6 @@ def build_sample_long_5min(
     write_sample("sample-long-5min", meta, topic_messages, msgtypes, typestore)
 
 
-def build_sample_dual_arm_6joint_3cam(
-    messages: dict[str, list[tuple[int, bytes]]],
-    msgtypes: dict[str, str],
-    typestore: object,
-    meta_template: dict,
-    reader: AnyReader,
-) -> None:
-    """Dual arm, 6 joints per arm + 2 grippers (14 DoF), 3 cameras."""
-    start_ns, frame_count, fps = standard_frame_info(messages)
-    joint_names = [
-        *(f"left_arm_joint{i}" for i in range(1, 7)),
-        *(f"right_arm_joint{i}" for i in range(1, 7)),
-        "left_gripper_joint1",
-        "right_gripper_joint1",
-    ]
-    joint_rows = subset_joint_rows_fast(
-        messages[JOINT_TOPIC],
-        output_names=joint_names,
-        rename_from_base=None,
-        msgtype=msgtypes[JOINT_TOPIC],
-        typestore=typestore,
-        reader=reader,
-    )
-    topic_messages = {**three_camera_messages(messages), JOINT_TOPIC: joint_rows}
-    meta = update_meta_for_export(
-        meta_template,
-        cameras=camera_specs(THREE_CAM_NAMES, fps),
-        joint_names=joint_names,
-        frame_count=frame_count,
-        fps=fps,
-        start_ns=start_ns,
-        record_id="SAMPLE-DUAL-ARM-6JOINT",
-    )
-    write_sample("sample-dual-arm-6joint-3cam", meta, topic_messages, msgtypes, typestore)
-
-
-def build_sample_single_arm_6joint_1cam(
-    messages: dict[str, list[tuple[int, bytes]]],
-    msgtypes: dict[str, str],
-    typestore: object,
-    meta_template: dict,
-    reader: AnyReader,
-) -> None:
-    """Single arm, arm_joint1..6 (from left arm), 1 camera."""
-    start_ns, frame_count, fps = standard_frame_info(messages)
-    joint_names = [f"arm_joint{i}" for i in range(1, 7)]
-    rename = {f"arm_joint{i}": f"left_arm_joint{i}" for i in range(1, 7)}
-    joint_rows = subset_joint_rows_fast(
-        messages[JOINT_TOPIC],
-        output_names=joint_names,
-        rename_from_base=rename,
-        msgtype=msgtypes[JOINT_TOPIC],
-        typestore=typestore,
-        reader=reader,
-    )
-    topic_messages = {
-        CAMERA_TOPICS["head_color"]: messages[CAMERA_TOPICS["head_color"]],
-        JOINT_TOPIC: joint_rows,
-    }
-    meta = update_meta_for_export(
-        meta_template,
-        cameras=camera_specs(["head_color"], fps),
-        joint_names=joint_names,
-        frame_count=frame_count,
-        fps=fps,
-        start_ns=start_ns,
-        record_id="SAMPLE-SINGLE-ARM-6JOINT",
-    )
-    write_sample("sample-single-arm-6joint-1cam", meta, topic_messages, msgtypes, typestore)
-
-
-def build_sample_dual_arm_no_torso_3cam(
-    messages: dict[str, list[tuple[int, bytes]]],
-    msgtypes: dict[str, str],
-    typestore: object,
-    meta_template: dict,
-    reader: AnyReader,
-) -> None:
-    """Dual arm (7+7) + grippers, without head/body/lift joints, 3 cameras."""
-    start_ns, frame_count, fps = standard_frame_info(messages)
-    joint_names = [name for name in BASE_JOINT_NAMES if name not in TORSO_JOINTS]
-    joint_rows = subset_joint_rows_fast(
-        messages[JOINT_TOPIC],
-        output_names=joint_names,
-        rename_from_base=None,
-        msgtype=msgtypes[JOINT_TOPIC],
-        typestore=typestore,
-        reader=reader,
-    )
-    topic_messages = {**three_camera_messages(messages), JOINT_TOPIC: joint_rows}
-    meta = update_meta_for_export(
-        meta_template,
-        cameras=camera_specs(THREE_CAM_NAMES, fps),
-        joint_names=joint_names,
-        frame_count=frame_count,
-        fps=fps,
-        start_ns=start_ns,
-        record_id="SAMPLE-DUAL-ARM-NO-TORSO",
-    )
-    write_sample("sample-dual-arm-no-torso-3cam", meta, topic_messages, msgtypes, typestore)
-
-
 def build_sample_invalid() -> None:
     sample_dir = EXAMPLES_DIR / "sample-invalid"
     if sample_dir.exists():
@@ -459,9 +473,7 @@ GENERATED_SAMPLES = (
     "sample-4cam",
     "sample-meta-mismatch",
     "sample-long-5min",
-    "sample-dual-arm-6joint-3cam",
-    "sample-single-arm-6joint-1cam",
-    "sample-dual-arm-no-torso-3cam",
+    *(profile.sample_name for profile in ROBOT_PROFILES),
     "sample-invalid",
 )
 
@@ -478,11 +490,14 @@ def main() -> None:
         build_sample_4cam(messages, msgtypes, typestore, meta_template, reader)
         build_sample_meta_mismatch(messages, msgtypes, typestore, meta_template, reader)
         build_sample_long_5min(messages, msgtypes, typestore, meta_template, reader)
-        build_sample_dual_arm_6joint_3cam(messages, msgtypes, typestore, meta_template, reader)
-        build_sample_single_arm_6joint_1cam(messages, msgtypes, typestore, meta_template, reader)
-        build_sample_dual_arm_no_torso_3cam(messages, msgtypes, typestore, meta_template, reader)
+        for profile in ROBOT_PROFILES:
+            build_robot_profile_sample(profile, messages, msgtypes, typestore, meta_template, reader)
 
     build_sample_invalid()
+
+    stale = EXAMPLES_DIR / "sample-dual-arm-no-torso-3cam"
+    if stale.exists():
+        shutil.rmtree(stale)
 
     print("Generated examples (from examples/sample-raw/):")
     print("  - examples/sample-raw/  (base, keep in git)")

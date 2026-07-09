@@ -80,6 +80,7 @@
 
 - 每项为非空字符串
 - 顺序即为导出 `af_joints/joint_states.json`、`af_lerobot_v2` 与 `af_rlds` 中 `state` / `action` 的维度顺序
+- **必须与对应机器人本体 URDF 中的关节名称严格一致**（含大小写、下划线等），以便下游仿真、可视化与真机对齐
 - bag 中关节话题的 `joint_names` 可与 meta 顺序不同，但**必须包含 meta 中的全部名称**
 
 ### 2.5 关节单位
