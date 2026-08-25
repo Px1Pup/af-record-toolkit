@@ -67,6 +67,49 @@ def _feature_stats(array: np.ndarray, *, image: bool = False) -> dict[str, Any]:
     return stats
 
 
+def _init_image_stats(chw: np.ndarray) -> dict[str, Any]:
+    """Online image stats from one CHW uint8 frame (pixels treated as samples)."""
+    arr = chw.astype(np.float64) / 255.0
+    c, h, w = arr.shape
+    pixel_count = h * w
+    return {
+        "min": arr.reshape(c, -1).min(axis=1).reshape(c, 1, 1),
+        "max": arr.reshape(c, -1).max(axis=1).reshape(c, 1, 1),
+        "sum": arr.reshape(c, -1).sum(axis=1),
+        "sumsq": np.square(arr.reshape(c, -1)).sum(axis=1),
+        "pixel_count": float(pixel_count),
+        "frame_count": 1,
+    }
+
+
+def _update_image_stats(stats: dict[str, Any], chw: np.ndarray) -> dict[str, Any]:
+    arr = chw.astype(np.float64) / 255.0
+    c = arr.shape[0]
+    flat = arr.reshape(c, -1)
+    pixel_count = flat.shape[1]
+    stats["min"] = np.minimum(stats["min"], flat.min(axis=1).reshape(c, 1, 1))
+    stats["max"] = np.maximum(stats["max"], flat.max(axis=1).reshape(c, 1, 1))
+    stats["sum"] = stats["sum"] + flat.sum(axis=1)
+    stats["sumsq"] = stats["sumsq"] + np.square(flat).sum(axis=1)
+    stats["pixel_count"] = stats["pixel_count"] + pixel_count
+    stats["frame_count"] = stats["frame_count"] + 1
+    return stats
+
+
+def _finalize_image_stats(stats: dict[str, Any]) -> dict[str, Any]:
+    pixel_count = float(stats["pixel_count"])
+    mean_flat = stats["sum"] / pixel_count
+    var = np.maximum(stats["sumsq"] / pixel_count - np.square(mean_flat), 0.0)
+    return {
+        "min": stats["min"],
+        "max": stats["max"],
+        "mean": mean_flat.reshape(-1, 1, 1),
+        "std": np.sqrt(var).reshape(-1, 1, 1),
+        # Match HF / prior writer: count = number of frames (not pixels).
+        "count": np.array([stats["frame_count"]], dtype=np.int64),
+    }
+
+
 def _aggregate_stats(stats_list: list[dict[str, dict[str, Any]]]) -> dict[str, dict[str, Any]]:
     keys = {key for stats in stats_list for key in stats}
     aggregated: dict[str, dict[str, Any]] = {}
@@ -238,6 +281,7 @@ class LeRobotV21Writer:
             "task": [],
             "frame_index": [],
             "timestamp": [],
+            "image_stats": {},
         }
         for key, ft in self.features.items():
             if key in buffer or key in {"index", "episode_index", "task_index"}:
@@ -273,6 +317,12 @@ class LeRobotV21Writer:
                 if not cv2.imwrite(str(path), bgr):
                     raise RuntimeError(f"Failed to write image frame: {path}")
                 self.episode_buffer[key].append(str(path))
+                chw = np.transpose(img, (2, 0, 1))
+                running = self.episode_buffer["image_stats"].get(key)
+                if running is None:
+                    self.episode_buffer["image_stats"][key] = _init_image_stats(chw)
+                else:
+                    self.episode_buffer["image_stats"][key] = _update_image_stats(running, chw)
             else:
                 self.episode_buffer[key].append(np.asarray(value))
 
@@ -312,6 +362,7 @@ class LeRobotV21Writer:
 
         episode_length = episode_buffer.pop("size")
         tasks = episode_buffer.pop("task")
+        image_stats = episode_buffer.pop("image_stats", {})
         episode_index = int(episode_buffer["episode_index"])
         episode_tasks = sorted(set(tasks))
 
@@ -373,15 +424,8 @@ class LeRobotV21Writer:
         ep_stats: dict[str, Any] = {}
         for key, ft in self.features.items():
             if ft["dtype"] in {"image", "video"}:
-                images = []
-                for path in episode_buffer[key]:
-                    bgr = cv2.imread(path, cv2.IMREAD_COLOR)
-                    if bgr is None:
-                        continue
-                    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-                    images.append(np.transpose(rgb, (2, 0, 1))[None, ...])
-                if images:
-                    ep_stats[key] = _feature_stats(np.concatenate(images, axis=0), image=True)
+                if key in image_stats:
+                    ep_stats[key] = _finalize_image_stats(image_stats[key])
             elif key in episode_buffer and isinstance(episode_buffer[key], np.ndarray):
                 ep_stats[key] = _feature_stats(episode_buffer[key])
 
