@@ -330,14 +330,15 @@ def resolve_export_image_keys(cameras: list[CameraSpec]) -> dict[str, str]:
     return mapping
 
 
-def build_aligned_frames(
+def collect_aligned_episode(
     reader,
     bindings: list[TopicBinding],
     joint_connection,
     joint_names: list[str],
     image_key_by_camera: dict[str, str],
     task: str,
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
+    """Align streams and keep compressed JPEGs (no full-episode RGB decode)."""
     connection_by_camera = {binding.camera.name: binding.connection for binding in bindings}
     missing_bindings = set(image_key_by_camera) - set(connection_by_camera)
     if missing_bindings:
@@ -355,7 +356,8 @@ def build_aligned_frames(
     for timestamp, raw in read_topic_messages(reader, joint_connection):
         by_ts.setdefault(timestamp, {})["__joint__"] = raw
 
-    ordered: list[tuple[int, np.ndarray, dict[str, np.ndarray]]] = []
+    states: list[np.ndarray] = []
+    jpeg_frames: list[dict[str, bytes]] = []
     for timestamp in sorted(by_ts):
         bucket = by_ts[timestamp]
         missing_cameras = set(image_key_by_camera) - set(bucket)
@@ -378,20 +380,61 @@ def build_aligned_frames(
             )
         joint_msg = reader.deserialize(bucket["__joint__"], joint_connection.msgtype)
         state = np.asarray(extract_joint_states(joint_msg, joint_names), dtype=np.float32)
-        images: dict[str, np.ndarray] = {}
+        jpegs: dict[str, bytes] = {}
         for camera_name, feature_key in image_key_by_camera.items():
-            jpeg = decode_jpeg(bucket[camera_name], reader, connection_by_camera[camera_name].msgtype)
-            images[feature_key] = decode_jpeg_to_rgb(jpeg)
-        ordered.append((timestamp, state, images))
+            jpegs[feature_key] = decode_jpeg(
+                bucket[camera_name],
+                reader,
+                connection_by_camera[camera_name].msgtype,
+            )
+        states.append(state)
+        jpeg_frames.append(jpegs)
 
-    frames: list[dict[str, Any]] = []
-    for index, (_, state, images) in enumerate(ordered):
-        if index < len(ordered) - 1:
-            action = (ordered[index + 1][1] - state).astype(np.float32)
+    # Free CDR message buffers before decoding any RGB.
+    by_ts.clear()
+
+    actions: list[np.ndarray] = []
+    for index, state in enumerate(states):
+        if index < len(states) - 1:
+            actions.append((states[index + 1] - state).astype(np.float32))
         else:
-            action = np.zeros_like(state, dtype=np.float32)
-        frames.append({"state": state, "action": action, "task": task, **images})
-    return frames
+            actions.append(np.zeros_like(state, dtype=np.float32))
+
+    return {
+        "task": task,
+        "states": states,
+        "actions": actions,
+        "jpegs": jpeg_frames,
+        "image_keys": list(image_key_by_camera.values()),
+    }
+
+
+def iter_decoded_frames(episode: dict[str, Any]):
+    """Yield LeRobot-style frames, decoding one RGB set at a time."""
+    task = episode["task"]
+    for state, action, jpegs in zip(episode["states"], episode["actions"], episode["jpegs"]):
+        images = {key: decode_jpeg_to_rgb(jpeg) for key, jpeg in jpegs.items()}
+        yield {"state": state, "action": action, "task": task, **images}
+
+
+def build_aligned_frames(
+    reader,
+    bindings: list[TopicBinding],
+    joint_connection,
+    joint_names: list[str],
+    image_key_by_camera: dict[str, str],
+    task: str,
+) -> list[dict[str, Any]]:
+    """Compatibility helper: full decode. Prefer collect_aligned_episode for exports."""
+    episode = collect_aligned_episode(
+        reader,
+        bindings,
+        joint_connection,
+        joint_names,
+        image_key_by_camera,
+        task,
+    )
+    return list(iter_decoded_frames(episode))
 
 
 def _filter_create_kwargs(fn: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -408,25 +451,26 @@ def _post_write_hooks(dataset: Any) -> None:
         consolidate()
 
 
-def _infer_lerobot_features(first_frame: dict[str, Any], image_keys: list[str]) -> dict[str, Any]:
+def _infer_lerobot_features(
+    image_shapes: dict[str, tuple[int, ...]],
+    state_dim: int,
+    action_dim: int,
+) -> dict[str, Any]:
     features: dict[str, Any] = {}
-    for key in image_keys:
-        image = first_frame[key]
+    for key, shape in image_shapes.items():
         features[key] = {
             "dtype": "image",
-            "shape": tuple(image.shape),
+            "shape": tuple(shape),
             "names": ["height", "width", "channel"],
         }
-    state = np.asarray(first_frame["state"], dtype=np.float32)
-    action = np.asarray(first_frame["action"], dtype=np.float32)
     features["state"] = {
         "dtype": "float32",
-        "shape": tuple(state.shape),
+        "shape": (state_dim,),
         "names": ["state"],
     }
     features["action"] = {
         "dtype": "float32",
-        "shape": tuple(action.shape),
+        "shape": (action_dim,),
         "names": ["action"],
     }
     return features
@@ -532,7 +576,7 @@ def export_lerobot_v2(
         shutil.rmtree(out_dir)
 
     image_keys = resolve_export_image_keys([binding.camera for binding in bindings])
-    frames = build_aligned_frames(
+    episode = collect_aligned_episode(
         reader,
         bindings,
         joint_connection,
@@ -540,18 +584,28 @@ def export_lerobot_v2(
         image_keys,
         task=record_root.name,
     )
-    if not frames:
+    frame_count = len(episode["states"])
+    if frame_count < 1:
         raise ProcessAfRawError("No aligned frames available for af_lerobot_v2 export")
 
     feature_image_keys = [image_keys[binding.camera.name] for binding in bindings]
+    first_jpegs = episode["jpegs"][0]
+    image_shapes = {
+        key: tuple(decode_jpeg_to_rgb(first_jpegs[key]).shape) for key in feature_image_keys
+    }
+    state_dim = int(np.asarray(episode["states"][0]).shape[0])
+    action_dim = int(np.asarray(episode["actions"][0]).shape[0])
     dataset = _create_lerobot_dataset(
-        out_dir, meta, fps, _infer_lerobot_features(frames[0], feature_image_keys)
+        out_dir,
+        meta,
+        fps,
+        _infer_lerobot_features(image_shapes, state_dim, action_dim),
     )
-    for frame in frames:
+    for frame in iter_decoded_frames(episode):
         dataset.add_frame(frame)
     dataset.save_episode()
     _post_write_hooks(dataset)
-    print(f"Wrote af_lerobot_v2 dataset to {out_dir} ({len(frames)} frames)")
+    print(f"Wrote af_lerobot_v2 dataset to {out_dir} ({frame_count} frames)")
 
 
 def _import_tensorflow() -> Any:
@@ -562,14 +616,6 @@ def _import_tensorflow() -> Any:
             'af_rlds export requires tensorflow: pip install "tensorflow>=2.13.0"'
         ) from exc
     return tf
-
-
-def _encode_image_jpeg(rgb: np.ndarray) -> bytes:
-    bgr = cv2.cvtColor(np.asarray(rgb, dtype=np.uint8), cv2.COLOR_RGB2BGR)
-    ok, buf = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
-    if not ok:
-        raise ProcessAfRawError("Failed to JPEG-encode frame for af_rlds export")
-    return buf.tobytes()
 
 
 def _rlds_bytes_feature(tf: Any, value: bytes) -> Any:
@@ -585,13 +631,13 @@ def _rlds_int64_feature(tf: Any, value: int) -> Any:
 
 
 def _build_rlds_features_schema(
-    first_frame: dict[str, Any],
-    image_keys: list[str],
+    image_shapes: dict[str, tuple[int, ...]],
+    state_dim: int,
+    action_dim: int,
     joint_names: list[str],
     camera_names: list[str],
+    image_keys: list[str],
 ) -> dict[str, Any]:
-    state_dim = int(np.asarray(first_frame["state"]).shape[0])
-    action_dim = int(np.asarray(first_frame["action"]).shape[0])
     step_features: dict[str, Any] = {
         "steps/observation/state": {"dtype": "float32", "shape": [state_dim]},
         "steps/action": {"dtype": "float32", "shape": [action_dim]},
@@ -605,7 +651,7 @@ def _build_rlds_features_schema(
     for key in image_keys:
         step_features[f"steps/observation/{key}"] = {
             "dtype": "jpeg_bytes",
-            "shape": list(first_frame[key].shape),
+            "shape": list(image_shapes[key]),
         }
     return {
         "format": "af_rlds",
@@ -630,28 +676,36 @@ def _encode_rlds_sequence_example(
     tf: Any,
     episode: dict[str, Any],
     image_keys: list[str],
+    meta: dict,
+    record_name: str,
+    fps: int,
+    joint_names: list[str],
+    camera_names: list[str],
 ) -> bytes:
-    meta = episode["episode_metadata"]
-    steps = episode["steps"]
+    states = episode["states"]
+    actions = episode["actions"]
+    jpegs = episode["jpegs"]
+    task = str(episode["task"])
+    last_index = len(states) - 1
 
     context = tf.train.Features(
         feature={
-            "episode/recording_id": _rlds_bytes_feature(
-                tf, str(meta["recording_id"]).encode("utf-8")
+            "episode/recording_id": _rlds_bytes_feature(tf, record_name.encode("utf-8")),
+            "episode/robot_id": _rlds_bytes_feature(
+                tf, str(meta.get("robot_id", record_name)).encode("utf-8")
             ),
-            "episode/robot_id": _rlds_bytes_feature(tf, str(meta["robot_id"]).encode("utf-8")),
             "episode/robot_type": _rlds_bytes_feature(
-                tf, str(meta["robot_type"]).encode("utf-8")
+                tf, str(meta.get("robot_type", "unknown")).encode("utf-8")
             ),
-            "episode/fps": _rlds_int64_feature(tf, int(meta["fps"])),
+            "episode/fps": _rlds_int64_feature(tf, int(fps)),
             "episode/joint_names": _rlds_bytes_feature(
-                tf, json.dumps(meta["joint_names"], ensure_ascii=False).encode("utf-8")
+                tf, json.dumps(list(joint_names), ensure_ascii=False).encode("utf-8")
             ),
             "episode/camera_names": _rlds_bytes_feature(
-                tf, json.dumps(meta["camera_names"], ensure_ascii=False).encode("utf-8")
+                tf, json.dumps(list(camera_names), ensure_ascii=False).encode("utf-8")
             ),
             "episode/camera_feature_keys": _rlds_bytes_feature(
-                tf, json.dumps(meta["camera_feature_keys"], ensure_ascii=False).encode("utf-8")
+                tf, json.dumps(list(image_keys), ensure_ascii=False).encode("utf-8")
             ),
         }
     )
@@ -659,44 +713,42 @@ def _encode_rlds_sequence_example(
     feature_lists: dict[str, Any] = {}
     for key in image_keys:
         feature_lists[f"steps/observation/{key}"] = tf.train.FeatureList(
-            feature=[
-                _rlds_bytes_feature(tf, _encode_image_jpeg(step["observation"][key]))
-                for step in steps
-            ]
+            feature=[_rlds_bytes_feature(tf, frame_jpegs[key]) for frame_jpegs in jpegs]
         )
 
     feature_lists["steps/observation/state"] = tf.train.FeatureList(
         feature=[
-            _rlds_float_feature(tf, np.asarray(step["observation"]["state"], dtype=np.float32).tolist())
-            for step in steps
+            _rlds_float_feature(tf, np.asarray(state, dtype=np.float32).tolist())
+            for state in states
         ]
     )
     feature_lists["steps/action"] = tf.train.FeatureList(
         feature=[
-            _rlds_float_feature(tf, np.asarray(step["action"], dtype=np.float32).tolist())
-            for step in steps
+            _rlds_float_feature(tf, np.asarray(action, dtype=np.float32).tolist())
+            for action in actions
         ]
     )
     feature_lists["steps/discount"] = tf.train.FeatureList(
-        feature=[_rlds_float_feature(tf, [float(step["discount"])]) for step in steps]
+        feature=[_rlds_float_feature(tf, [1.0]) for _ in states]
     )
     feature_lists["steps/reward"] = tf.train.FeatureList(
-        feature=[_rlds_float_feature(tf, [float(step["reward"])]) for step in steps]
+        feature=[_rlds_float_feature(tf, [0.0]) for _ in states]
     )
     feature_lists["steps/is_first"] = tf.train.FeatureList(
-        feature=[_rlds_int64_feature(tf, int(step["is_first"])) for step in steps]
+        feature=[_rlds_int64_feature(tf, int(index == 0)) for index in range(len(states))]
     )
     feature_lists["steps/is_last"] = tf.train.FeatureList(
-        feature=[_rlds_int64_feature(tf, int(step["is_last"])) for step in steps]
+        feature=[
+            _rlds_int64_feature(tf, int(index == last_index)) for index in range(len(states))
+        ]
     )
     feature_lists["steps/is_terminal"] = tf.train.FeatureList(
-        feature=[_rlds_int64_feature(tf, int(step["is_terminal"])) for step in steps]
+        feature=[
+            _rlds_int64_feature(tf, int(index == last_index)) for index in range(len(states))
+        ]
     )
     feature_lists["steps/language_instruction"] = tf.train.FeatureList(
-        feature=[
-            _rlds_bytes_feature(tf, str(step["language_instruction"]).encode("utf-8"))
-            for step in steps
-        ]
+        feature=[_rlds_bytes_feature(tf, task.encode("utf-8")) for _ in states]
     )
 
     sequence = tf.train.SequenceExample(
@@ -704,49 +756,6 @@ def _encode_rlds_sequence_example(
         feature_lists=tf.train.FeatureLists(feature_list=feature_lists),
     )
     return sequence.SerializeToString()
-
-
-def _frames_to_rlds_episode(
-    frames: list[dict[str, Any]],
-    meta: dict,
-    record_name: str,
-    fps: int,
-    joint_names: list[str],
-    camera_names: list[str],
-    image_keys: list[str],
-) -> dict[str, Any]:
-    steps: list[dict[str, Any]] = []
-    last_index = len(frames) - 1
-    for index, frame in enumerate(frames):
-        observation: dict[str, Any] = {
-            "state": np.asarray(frame["state"], dtype=np.float32),
-        }
-        for key in image_keys:
-            observation[key] = np.asarray(frame[key], dtype=np.uint8)
-        steps.append(
-            {
-                "observation": observation,
-                "action": np.asarray(frame["action"], dtype=np.float32),
-                "discount": np.float32(1.0),
-                "reward": np.float32(0.0),
-                "is_first": bool(index == 0),
-                "is_last": bool(index == last_index),
-                "is_terminal": bool(index == last_index),
-                "language_instruction": str(frame["task"]),
-            }
-        )
-    return {
-        "steps": steps,
-        "episode_metadata": {
-            "recording_id": record_name,
-            "robot_id": str(meta.get("robot_id", record_name)),
-            "robot_type": str(meta.get("robot_type", "unknown")),
-            "fps": int(fps),
-            "joint_names": list(joint_names),
-            "camera_names": list(camera_names),
-            "camera_feature_keys": list(image_keys),
-        },
-    }
 
 
 def export_rlds(
@@ -766,7 +775,7 @@ def export_rlds(
     image_key_by_camera = resolve_export_image_keys([binding.camera for binding in bindings])
     feature_image_keys = [image_key_by_camera[binding.camera.name] for binding in bindings]
     camera_names = [binding.camera.name for binding in bindings]
-    frames = build_aligned_frames(
+    episode = collect_aligned_episode(
         reader,
         bindings,
         joint_connection,
@@ -774,23 +783,23 @@ def export_rlds(
         image_key_by_camera,
         task=record_root.name,
     )
-    if not frames:
+    frame_count = len(episode["states"])
+    if frame_count < 1:
         raise ProcessAfRawError("No aligned frames available for af_rlds export")
 
-    episode = _frames_to_rlds_episode(
-        frames,
-        meta,
-        record_root.name,
-        fps,
-        joint_names,
-        camera_names,
-        feature_image_keys,
-    )
+    first_jpegs = episode["jpegs"][0]
+    image_shapes = {
+        key: tuple(decode_jpeg_to_rgb(first_jpegs[key]).shape) for key in feature_image_keys
+    }
+    state_dim = int(np.asarray(episode["states"][0]).shape[0])
+    action_dim = int(np.asarray(episode["actions"][0]).shape[0])
     features_schema = _build_rlds_features_schema(
-        frames[0],
-        feature_image_keys,
+        image_shapes,
+        state_dim,
+        action_dim,
         joint_names,
         camera_names,
+        feature_image_keys,
     )
 
     version_dir = out_dir / RLDS_VERSION
@@ -802,7 +811,16 @@ def export_rlds(
 
     shard_name = f"{RLDS_DATASET_NAME}-train.tfrecord-00000-of-00001"
     tfrecord_path = version_dir / shard_name
-    encoded = _encode_rlds_sequence_example(tf, episode, feature_image_keys)
+    encoded = _encode_rlds_sequence_example(
+        tf,
+        episode,
+        feature_image_keys,
+        meta,
+        record_root.name,
+        fps,
+        joint_names,
+        camera_names,
+    )
     with tf.io.TFRecordWriter(str(tfrecord_path)) as writer:
         writer.write(encoded)
 
@@ -821,7 +839,7 @@ def export_rlds(
                 "filepathTemplate": "{DATASET}-{SPLIT}.{FILEFORMAT}-{SHARD_X_OF_Y}",
                 "name": "train",
                 "numBytes": str(num_bytes),
-                "shardLengths": [str(len(frames))],
+                "shardLengths": [str(frame_count)],
             }
         ],
         "version": RLDS_VERSION,
@@ -830,7 +848,7 @@ def export_rlds(
         json.dumps(dataset_info, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    print(f"Wrote af_rlds dataset to {out_dir} ({len(frames)} frames)")
+    print(f"Wrote af_rlds dataset to {out_dir} ({frame_count} frames)")
 
 
 def extract_joint_states(msg, expected_names: list[str]) -> list[float]:

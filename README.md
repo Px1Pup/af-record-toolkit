@@ -1,4 +1,4 @@
-# af-record Toolkit v1.0.1
+# af-record Toolkit v1.0.2
 
 将 **af-record RAW**（`af_meta.json` + `af_rosbag/`）导出为完整 **af-record 标准格式**，包含 MP4、关节 JSON、MCAP、标注、LeRobot v2.1 与 RLDS。
 
@@ -9,7 +9,7 @@
 要求 **Python 3.10+**。
 
 ```bash
-cd af-record-toolkit-v1.0.1
+cd af-record-toolkit-v1.0.2
 python -m venv .venv
 
 # Windows
@@ -44,7 +44,7 @@ python process_af_raw.py examples/sample-raw -o examples/sample-output
 ## 工具包结构
 
 ```
-af-record-toolkit-v1.0.1/
+af-record-toolkit-v1.0.2/
 ├── VERSION                 # 与 af-record / af-raw 共版本号
 ├── README.md
 ├── requirements.txt
@@ -71,4 +71,4 @@ af-record-toolkit-v1.0.1/
 
 ## 版本
 
-**v1.0.1** — af-record / af-raw / toolkit 共版本号（`VERSION`、`af_meta.json` 的 `version` 字段）。
+**v1.0.2** — af-record / af-raw / toolkit 共版本号（`VERSION`、`af_meta.json` 的 `version` 字段）。

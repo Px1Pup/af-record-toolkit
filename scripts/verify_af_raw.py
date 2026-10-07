@@ -21,7 +21,7 @@ from process_af_raw import (  # noqa: E402
     _list_joint_topics,
     assert_joint_msgdef,
     bind_cameras,
-    build_aligned_frames,
+    collect_aligned_episode,
     decode_jpeg,
     decode_jpeg_to_bgr,
     extract_joint_states,
@@ -390,7 +390,7 @@ def validate_rosbag_contents(raw_dir: Path) -> list[CheckResult]:
             if bindings and joint_connection is not None:
                 try:
                     image_key_by_camera = resolve_export_image_keys([b.camera for b in bindings])
-                    frames = build_aligned_frames(
+                    episode = collect_aligned_episode(
                         reader,
                         bindings,
                         joint_connection,
@@ -398,10 +398,11 @@ def validate_rosbag_contents(raw_dir: Path) -> list[CheckResult]:
                         image_key_by_camera,
                         task=raw_dir.name,
                     )
+                    frame_count = len(episode["states"])
                     results.append(
                         _ok(
                             "rosbag.ml_frames",
-                            f"build_aligned_frames produced {len(frames)} frame(s) for ML export",
+                            f"collect_aligned_episode produced {frame_count} frame(s) for ML export",
                         )
                     )
                 except ProcessAfRawError as exc:
