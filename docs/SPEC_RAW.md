@@ -1,6 +1,6 @@
 # af-record RAW 数据格式要求
 
-**格式版本：v1.0.1**（与 af-record 标准格式、af-record-toolkit 共用版本号。）
+**格式版本：v1.0.2**（`af_meta.json` 的 `version` 字段；与工具包版本独立，见根目录 `FORMAT_VERSION` / `VERSION`。）
 
 本文档描述 `process_af_raw.py` 所接受的**初始 raw 录制**格式：根目录下仅包含 `af_meta.json` 与 `af_rosbag/`。示例见 `examples/sample-raw/`。
 
@@ -19,7 +19,7 @@
 
 **不应**在初始 raw 目录中包含以下衍生产物（由 `process_af_raw.py` 生成）：
 
-- `af_cameras/`、`af_joints/`、`af_mcap/`、`af_annotations/`、`af_lerobot_v2/`、`af_rlds/`
+- `af_cameras/`、`af_joints/`、`af_mcap/`、`af_annotations/`、`af_lerobot_v2/`、`af_lerobot_v3/`、`af_rlds/`
 
 ---
 
@@ -47,7 +47,7 @@
 | `end_effectors` | array | **非空** |
 | `joint_names` | array | **非空**，顺序与关节话题一致 |
 | `format` | string | 建议 `"af-record"` |
-| `version` | string | 建议 `"v1.0.1"`（与 af-record / af-raw / toolkit 共版本号） |
+| `version` | string | 建议 `"v1.0.2"`（**格式**版本号，与 toolkit 的 `VERSION` 独立） |
 
 ### 2.2 `cameras[]`
 
@@ -79,7 +79,7 @@
 ### 2.4 `joint_names[]`
 
 - 每项为非空字符串
-- 顺序即为导出 `af_joints/joint_states.json`、`af_lerobot_v2` 与 `af_rlds` 中 `state` / `action` 的维度顺序
+- 顺序即为导出 `af_joints/joint_states.json`、`af_lerobot_v2` / `af_lerobot_v3` 与 `af_rlds` 中 `state` / `action` 的维度顺序
 - **若某关节对应本体 URDF 中的可动关节，其名称应与 URDF 严格一致**（含大小写、下划线等），以便下游仿真、可视化与真机对齐
 - **可包含 URDF 中不存在的额外关节名**（如夹爪归一化轴、自定义附加轴等），只要 rosbag 关节话题里能取到对应数值即可
 - bag 中关节话题的 `joint_names` 可与 meta 顺序不同，且**可多于** meta；但 meta 列出的每个名称**必须**能在 bag 消息中找到
@@ -139,7 +139,7 @@ float64[] joint_states
 **LeRobot / RLDS 导出**额外要求：
 
 - `cameras[]` 中列出的**每路相机** + `joint_states` 须按**相同纳秒时间戳**一一对应
-- 未对齐时导出失败并报错（`af_lerobot_v2` 与 `af_rlds` 为 af-record 标准格式的必选组成部分）
+- 未对齐时导出失败并报错（`af_lerobot_v2`、`af_lerobot_v3` 与 `af_rlds` 为 af-record 标准格式的必选组成部分）
 
 ---
 
@@ -160,10 +160,11 @@ python process_af_raw.py <input_dir> -o <output_dir>
 ├── af_mcap/
 ├── af_annotations/
 ├── af_lerobot_v2/        # LeRobot v2.1 video 模式（必选）
+├── af_lerobot_v3/        # LeRobot v3.0 file-based 布局（必选）
 └── af_rlds/              # RLDS TFRecord（必选）
 ```
 
-`af_lerobot_v2` 与 `af_rlds` 导出失败时脚本报错退出。LeRobot 为 MP4 + parquet 路径引用（非 parquet 嵌像素）；`state`/`action` 与 meta `joint_names` 一致，`action` 为相邻帧差分。内置 `lerobot_v21_writer.py`，无需 HuggingFace lerobot。
+`af_lerobot_v2`、`af_lerobot_v3` 与 `af_rlds` 导出失败时脚本报错退出。`state`/`action` 与 meta `joint_names` 一致，`action` 为相邻帧差分。内置 `lerobot_v21_writer.py` / `lerobot_v30_writer.py`，无需 HuggingFace `lerobot`。
 
 ---
 
@@ -177,7 +178,7 @@ python process_af_raw.py <input_dir> -o <output_dir>
 | `joint_names missing from bag joint topic` | meta 中关节名在 bag 消息里找不到 |
 | `Incomplete aligned frame at timestamp ...` | 某路相机或关节在该时间戳缺失 |
 | `af_rlds export requires tensorflow` | 未安装 `requirements.txt` 中的依赖 |
-| `Native LeRobot v2.1 export requires pyarrow` | 未安装 pyarrow |
+| `Native LeRobot v2.1/v3.0 export requires pyarrow` | 未安装 pyarrow |
 
 ---
 

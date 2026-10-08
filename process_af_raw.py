@@ -307,7 +307,7 @@ def resolve_export_image_keys(cameras: list[CameraSpec]) -> dict[str, str]:
     """Map af_meta camera name -> LeRobot / RLDS image feature key."""
     if not cameras:
         raise ProcessAfRawError(
-            "Cannot export af_lerobot_v2 / af_rlds: af_meta.json cameras list is empty"
+            "Cannot export af_lerobot_v2 / af_lerobot_v3 / af_rlds: af_meta.json cameras list is empty"
         )
 
     mapping: dict[str, str] = {}
@@ -375,7 +375,7 @@ def collect_aligned_episode(
                 details.append(f"missing joint topic {joint_connection.topic!r}")
             raise ProcessAfRawError(
                 f"Incomplete aligned frame at timestamp {timestamp}: {'; '.join(details)}. "
-                "af_lerobot_v2 / af_rlds require identical timestamps across all cameras "
+                "af_lerobot_v2 / af_lerobot_v3 / af_rlds require identical timestamps across all cameras "
                 "listed in af_meta.json and the joint_states topic."
             )
         joint_msg = reader.deserialize(bucket["__joint__"], joint_connection.msgtype)
@@ -562,39 +562,35 @@ def _create_lerobot_dataset(output_dir: Path, meta: dict, fps: int, features: di
     )
 
 
-def export_lerobot_v2(
-    record_root: Path,
-    meta: dict,
-    reader,
-    bindings: list[TopicBinding],
-    joint_connection,
-    joint_names: list[str],
-    out_dir: Path,
-    fps: int,
-) -> None:
-    if out_dir.exists():
-        shutil.rmtree(out_dir)
-
-    image_keys = resolve_export_image_keys([binding.camera for binding in bindings])
-    episode = collect_aligned_episode(
-        reader,
-        bindings,
-        joint_connection,
-        joint_names,
-        image_keys,
-        task=record_root.name,
-    )
-    frame_count = len(episode["states"])
-    if frame_count < 1:
-        raise ProcessAfRawError("No aligned frames available for af_lerobot_v2 export")
-
-    feature_image_keys = [image_keys[binding.camera.name] for binding in bindings]
+def _episode_feature_shapes(episode: dict[str, Any], feature_image_keys: list[str]) -> tuple[
+    dict[str, tuple[int, ...]],
+    int,
+    int,
+]:
     first_jpegs = episode["jpegs"][0]
     image_shapes = {
         key: tuple(decode_jpeg_to_rgb(first_jpegs[key]).shape) for key in feature_image_keys
     }
     state_dim = int(np.asarray(episode["states"][0]).shape[0])
     action_dim = int(np.asarray(episode["actions"][0]).shape[0])
+    return image_shapes, state_dim, action_dim
+
+
+def export_lerobot_v2_from_episode(
+    meta: dict,
+    episode: dict[str, Any],
+    feature_image_keys: list[str],
+    out_dir: Path,
+    fps: int,
+) -> None:
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+
+    frame_count = len(episode["states"])
+    if frame_count < 1:
+        raise ProcessAfRawError("No aligned frames available for af_lerobot_v2 export")
+
+    image_shapes, state_dim, action_dim = _episode_feature_shapes(episode, feature_image_keys)
     dataset = _create_lerobot_dataset(
         out_dir,
         meta,
@@ -606,6 +602,40 @@ def export_lerobot_v2(
     dataset.save_episode()
     _post_write_hooks(dataset)
     print(f"Wrote af_lerobot_v2 dataset to {out_dir} ({frame_count} frames)")
+
+
+def export_lerobot_v3_from_episode(
+    meta: dict,
+    episode: dict[str, Any],
+    feature_image_keys: list[str],
+    out_dir: Path,
+    fps: int,
+) -> None:
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+
+    frame_count = len(episode["states"])
+    if frame_count < 1:
+        raise ProcessAfRawError("No aligned frames available for af_lerobot_v3 export")
+
+    from lerobot_v30_writer import LeRobotV30Writer
+
+    image_shapes, state_dim, action_dim = _episode_feature_shapes(episode, feature_image_keys)
+    robot_id = str(meta.get("robot_id", out_dir.name))
+    robot_type = str(meta.get("robot_type", "unknown"))
+    dataset = LeRobotV30Writer.create(
+        root=str(out_dir),
+        repo_id=f"local/{robot_id}",
+        robot_type=robot_type,
+        fps=fps,
+        features=_infer_lerobot_features(image_shapes, state_dim, action_dim),
+        ffmpeg=resolve_ffmpeg(),
+    )
+    for frame in iter_decoded_frames(episode):
+        dataset.add_frame(frame)
+    dataset.save_episode()
+    dataset.finalize()
+    print(f"Wrote af_lerobot_v3 dataset to {out_dir} ({frame_count} frames)")
 
 
 def _import_tensorflow() -> Any:
@@ -758,13 +788,13 @@ def _encode_rlds_sequence_example(
     return sequence.SerializeToString()
 
 
-def export_rlds(
+def export_rlds_from_episode(
     record_root: Path,
     meta: dict,
-    reader,
-    bindings: list[TopicBinding],
-    joint_connection,
+    episode: dict[str, Any],
     joint_names: list[str],
+    camera_names: list[str],
+    feature_image_keys: list[str],
     out_dir: Path,
     fps: int,
 ) -> None:
@@ -772,27 +802,11 @@ def export_rlds(
         shutil.rmtree(out_dir)
 
     tf = _import_tensorflow()
-    image_key_by_camera = resolve_export_image_keys([binding.camera for binding in bindings])
-    feature_image_keys = [image_key_by_camera[binding.camera.name] for binding in bindings]
-    camera_names = [binding.camera.name for binding in bindings]
-    episode = collect_aligned_episode(
-        reader,
-        bindings,
-        joint_connection,
-        joint_names,
-        image_key_by_camera,
-        task=record_root.name,
-    )
     frame_count = len(episode["states"])
     if frame_count < 1:
         raise ProcessAfRawError("No aligned frames available for af_rlds export")
 
-    first_jpegs = episode["jpegs"][0]
-    image_shapes = {
-        key: tuple(decode_jpeg_to_rgb(first_jpegs[key]).shape) for key in feature_image_keys
-    }
-    state_dim = int(np.asarray(episode["states"][0]).shape[0])
-    action_dim = int(np.asarray(episode["actions"][0]).shape[0])
+    image_shapes, state_dim, action_dim = _episode_feature_shapes(episode, feature_image_keys)
     features_schema = _build_rlds_features_schema(
         image_shapes,
         state_dim,
@@ -976,6 +990,7 @@ def prepare_output_dir(output_root: Path, *, inplace: bool = False) -> None:
         "af_mcap",
         "af_annotations",
         "af_lerobot_v2",
+        "af_lerobot_v3",
         "af_rlds",
     )
     if not inplace:
@@ -1049,23 +1064,38 @@ def process_raw_record(input_root: Path, output_root: Path, schema_src: Path) ->
             joint_names,
             output_root / "af_joints",
         )
-        export_lerobot_v2(
-            input_root,
-            meta,
+        image_key_by_camera = resolve_export_image_keys([binding.camera for binding in bindings])
+        feature_image_keys = [image_key_by_camera[binding.camera.name] for binding in bindings]
+        camera_names = [binding.camera.name for binding in bindings]
+        episode = collect_aligned_episode(
             reader,
             bindings,
             joint_connection,
             joint_names,
+            image_key_by_camera,
+            task=input_root.name,
+        )
+        export_lerobot_v2_from_episode(
+            meta,
+            episode,
+            feature_image_keys,
             output_root / "af_lerobot_v2",
             lerobot_fps,
         )
-        export_rlds(
+        export_lerobot_v3_from_episode(
+            meta,
+            episode,
+            feature_image_keys,
+            output_root / "af_lerobot_v3",
+            lerobot_fps,
+        )
+        export_rlds_from_episode(
             input_root,
             meta,
-            reader,
-            bindings,
-            joint_connection,
+            episode,
             joint_names,
+            camera_names,
+            feature_image_keys,
             output_root / "af_rlds",
             lerobot_fps,
         )

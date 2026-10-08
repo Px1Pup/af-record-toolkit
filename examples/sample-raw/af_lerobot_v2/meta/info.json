@@ -1,0 +1,108 @@
+{
+    "codebase_version": "v2.1",
+    "robot_type": "demo_robot",
+    "total_episodes": 1,
+    "total_frames": 159,
+    "total_tasks": 1,
+    "total_videos": 3,
+    "total_chunks": 1,
+    "chunks_size": 1000,
+    "fps": 30,
+    "splits": {},
+    "data_path": "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet",
+    "video_path": "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4",
+    "features": {
+        "image": {
+            "dtype": "video",
+            "shape": [
+                720,
+                1280,
+                3
+            ],
+            "names": [
+                "height",
+                "width",
+                "channel"
+            ]
+        },
+        "hand_left_color": {
+            "dtype": "video",
+            "shape": [
+                480,
+                848,
+                3
+            ],
+            "names": [
+                "height",
+                "width",
+                "channel"
+            ]
+        },
+        "hand_right_color": {
+            "dtype": "video",
+            "shape": [
+                480,
+                848,
+                3
+            ],
+            "names": [
+                "height",
+                "width",
+                "channel"
+            ]
+        },
+        "state": {
+            "dtype": "float32",
+            "shape": [
+                20
+            ],
+            "names": [
+                "state"
+            ]
+        },
+        "action": {
+            "dtype": "float32",
+            "shape": [
+                20
+            ],
+            "names": [
+                "action"
+            ]
+        },
+        "timestamp": {
+            "dtype": "float32",
+            "shape": [
+                1
+            ],
+            "names": null
+        },
+        "frame_index": {
+            "dtype": "int64",
+            "shape": [
+                1
+            ],
+            "names": null
+        },
+        "episode_index": {
+            "dtype": "int64",
+            "shape": [
+                1
+            ],
+            "names": null
+        },
+        "index": {
+            "dtype": "int64",
+            "shape": [
+                1
+            ],
+            "names": null
+        },
+        "task_index": {
+            "dtype": "int64",
+            "shape": [
+                1
+            ],
+            "names": null
+        }
+    }
+}

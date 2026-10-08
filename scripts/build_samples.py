@@ -17,7 +17,7 @@ from rosbags.rosbag2 import StoragePlugin, Writer
 ROOT = Path(__file__).resolve().parent.parent
 BASE_SAMPLE = ROOT / "examples" / "sample-raw"
 EXAMPLES_DIR = ROOT / "examples"
-AF_RECORD_VERSION = "v1.0.1"
+AF_RECORD_VERSION = "v1.0.2"  # af-record / af-raw format version (see FORMAT_VERSION)
 
 MSG_COMPRESSED_IMAGE = "sensor_msgs/msg/CompressedImage"
 

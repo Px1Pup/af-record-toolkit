@@ -42,6 +42,7 @@ DERIVED_DIRS = (
     "af_mcap",
     "af_annotations",
     "af_lerobot_v2",
+    "af_lerobot_v3",
     "af_rlds",
 )
 
@@ -349,7 +350,7 @@ def validate_rosbag_contents(raw_dir: Path) -> list[CheckResult]:
                             "rosbag.timestamp_align",
                             f"{incomplete} timestamp(s) missing a meta camera or joint; "
                             f"{len(complete)} fully aligned timestamp(s). "
-                            "af_lerobot_v2 / af_rlds export will fail.",
+                            "af_lerobot_v2 / af_lerobot_v3 / af_rlds export will fail.",
                         )
                     )
                 else:

@@ -6,7 +6,7 @@
 
 - 本工具**只读** RAW（`af_meta.json` + `af_rosbag/`），不解析客户私有格式
 - **客户侧**负责适配脚本；字段与校验规则见 [`SPEC_RAW.md`](SPEC_RAW.md)
-- RAW 合规后，一条命令导出完整标准格式（含 `af_lerobot_v2`、`af_rlds`）
+- RAW 合规后，一条命令导出完整标准格式（含 `af_lerobot_v2`、`af_lerobot_v3`、`af_rlds`）
 
 ## 适配要点
 
@@ -33,6 +33,6 @@ python process_af_raw.py <customer-raw> -o <out>  # 再导出
 
 - bag 中**未列入** `cameras[]` 的图像话题会被忽略（不影响导出）
 - `cameras[].name` 过短可能导致多话题匹配，应使用与话题名一致的具体名称
-- LeRobot 输出为 **video 模式**（MP4 + parquet 路径），体积小属正常
+- LeRobot 输出为 **video 模式**（`af_lerobot_v2` 为 v2.1 每集一文件；`af_lerobot_v3` 为 v3.0 file-based 布局），体积小属正常
 
 完整格式定义、输出目录树与报错对照：[`SPEC_RAW.md`](SPEC_RAW.md)。
